@@ -1,36 +1,71 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 using grinlib.CommonTools;
+using NReco.VideoConverter;
 
 namespace GrinMediaInfo
 {
-	enum EnEncoding
+	public enum EnEncoding
 	{
 		None,
+		NeedInfo,
+		HasInfo,
 		Pending,
 		Processing,
-		Done
+		Encoded,
+		Error
 	}
-	class clData
+	public class clData : IEditableObject
 	{
-		static internal clparam param;
+		static internal clParam param;
 
-		internal double bitrate;
-		internal double duration;
-		internal string durationStr;
-		internal long fileSize;
-		internal string format;
-		internal EnEncoding Encoding = EnEncoding.None;
+		public string Path
+		{
+			get
+			{
+				if (fileInfo != null)
+					return fileInfo.FullName.Substring(param.pathLength);
+				return "";
+			}
+		}
+		public double Bitrate { get; private set; }
+		public string Duration { get; private set; }
+
+		public int SizeMb { get; private set; }
+
+		public string Format { get; private set; }
+
+		public EnEncoding Status { get; private set; }
+
+		internal string pathBackup 
+		{
+			get
+			{
+				if (!string.IsNullOrEmpty(param.BackupPath))
+				{
+					return param.BackupPath + fileInfo.FullName.Replace(":", "_") ;
+				}
+				else
+				{
+					return fileInfo.DirectoryName + "\\_OldFile_" + fileInfo.Name;
+				}
+			}
+		}
+		
+		internal double durationMs;
+		internal long SizeByte;
 
 		internal System.IO.FileInfo fileInfo;
-		internal DataGridViewRow row;
+		internal BindingData Parent;
 
 		public clData(System.IO.FileInfo fileInfo)
 		{
 			this.fileInfo = fileInfo;
+			Status = EnEncoding.NeedInfo;
 		}
 
 		internal bool updateInfo()
@@ -44,80 +79,112 @@ namespace GrinMediaInfo
 				var ffProbe = new NReco.VideoInfo.FFProbe();
 				var videoInfo = ffProbe.GetMediaInfo(fileInfo.FullName);
 
-				duration = videoInfo.Duration.TotalMilliseconds;
-				fileSize = fileInfo.Length;
-				bitrate = (fileSize/1024.0) / (duration/1000.0);
-				durationStr = string.Format("{0}:{1}:{2}", videoInfo.Duration.Hours, videoInfo.Duration.Minutes, videoInfo.Duration.Seconds) ;
+				durationMs = videoInfo.Duration.TotalMilliseconds;
+				Duration = string.Format("{0}:{1}:{2}", videoInfo.Duration.Hours, videoInfo.Duration.Minutes, videoInfo.Duration.Seconds);
+				if (Duration.StartsWith("0:"))
+					Duration = Duration.Substring(2);
+				SizeByte = fileInfo.Length;
+				SizeMb = (int)(fileInfo.Length / (1024 * 1024.0));
+				Bitrate = Math.Round((SizeByte / 1024.0) / (durationMs / 1000.0));
 
+				string formatVideo = "";
+				string formatAudio = "";
 				for (int i = 0; i < videoInfo.Streams.Length; i++)
 				{
-					format += videoInfo.Streams[i].CodecLongName + " ";
+					if (videoInfo.Streams[i].CodecType == "video")
+						formatVideo += videoInfo.Streams[i].CodecName + " ";
+					else
+						formatAudio += videoInfo.Streams[i].CodecName + " ";
 				}
+				Format = formatVideo + formatAudio.Trim();
 
-				GenFunc.LogAddInfo(this,"updateInfo", "Time: " + Math.Round((DateTime.Now - start).TotalMilliseconds) + " [ms]");
+				Status = EnEncoding.HasInfo;
+
+				//GenFunc.LogAddInfo(this,"updateInfo", "Time: " + Math.Round((DateTime.Now - start).TotalMilliseconds) + " [ms]");
 				return true;
 			}
 			catch (Exception ex)
 			{
 				GenFunc.LogAdd(ex);
+				Status = EnEncoding.Error;
 			}
 			return false;
 		}
 
-		internal DataGridViewRow getRow()
+		public void BeginEdit()
 		{
+
+		}
+
+		public void EndEdit()
+		{
+
+		}
+
+		public void CancelEdit()
+		{
+
+		}
+
+		internal void EncodeVideo()
+		{
+			Status = EnEncoding.Processing;
+			frmMain.isDirty = true;
+			string originalPath = fileInfo.FullName;
+			string newName = fileInfo.FullName.Replace(fileInfo.Extension, ".mp4");
+
+			System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(pathBackup));
+			fileInfo.MoveTo(pathBackup);
+			fileInfo = new System.IO.FileInfo(newName);
 			try
 			{
-				row = new DataGridViewRow();
-				row.Cells.Add(getCell(fileInfo.FullName.Substring(param.pathLength)));
-				row.Cells.Add(getCell(Math.Round(bitrate)));
-				row.Cells.Add(getCell(durationStr));
-				row.Cells.Add(getCell(Math.Round(fileSize / (1024*1024.0))));
-				row.Cells.Add(getCell(format));
-				row.Cells.Add(getCell(""));
+				var ffMpeg = new FFMpegConverter();
+				ConvertSettings c = new ConvertSettings();
+				//c.VideoCodec = "libx264";
+				//c.CustomOutputArgs = "-crf 23";
+				//ffMpeg.ConvertMedia(cur.fileInfo.FullName, null, newName + "23", "MP4", c);
 
-				row.Tag = this;
-				return row;
+				//c.CustomOutputArgs = "-crf 1";
+				//ffMpeg.ConvertMedia(cur.fileInfo.FullName, null, newName + "1", "MP4", c);
+
+				c.VideoCodec = "libx265";
+				c.CustomOutputArgs = "-crf 28";
+				EncodingLog = new StringBuilder();
+				ffMpeg.FFMpegProcessPriority = System.Diagnostics.ProcessPriorityClass.BelowNormal;
+				ffMpeg.LogReceived += FfMpeg_LogReceived;
+				ffMpeg.ConvertMedia(fileInfo.FullName, null, newName, "MP4", c);
+				string s = EncodingLog.ToString();
+				
+				updateInfo();
+				Status = EnEncoding.Encoded;
 			}
 			catch (Exception ex)
 			{
 				GenFunc.LogAdd(ex);
+				FileFunc.TryDelete(newName);
+				fileInfo = new System.IO.FileInfo(pathBackup);
+				fileInfo.MoveTo(originalPath);
+				updateInfo();
+				Status = EnEncoding.Error;
 			}
-			return null;
+
+			frmMain.isDirty = true;
 		}
 
-		private DataGridViewCell getCell(object val)
+		internal StringBuilder EncodingLog { get; private set; }
+
+
+		private void FfMpeg_LogReceived(object sender, FFMpegLogEventArgs e)
 		{
-			try
-			{
-				DataGridViewTextBoxCell newCell = new DataGridViewTextBoxCell();
-				newCell.Value = val;
-				return newCell;
-			}
-			catch (Exception ex)
-			{
-				GenFunc.LogAdd(ex);
-			}
-			return null;
+			EncodingLog.AppendLine(e.Data);
 		}
 
-		internal void refreshRow()
+		internal void AskEncoding()
 		{
-			try
-			{
-				int i = 0;
-				row.Cells[i++].Value = fileInfo.FullName.Substring(param.pathLength);
-				row.Cells[i++].Value = Math.Round(bitrate);
-				row.Cells[i++].Value = durationStr;
-				row.Cells[i++].Value = Math.Round(fileSize / 1048576.0);
-				row.Cells[i++].Value = format;
-				row.Cells[i++].Value = Encoding.ToString();
-			}
-			catch (Exception ex)
-			{
-				GenFunc.LogAdd(ex);
-			}
-
+			Status = EnEncoding.Pending;
+			frmMain.isDirty = true;
 		}
+
+
 	}
 }

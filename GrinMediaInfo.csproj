@@ -59,8 +59,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="BindingData.cs" />
     <Compile Include="clData.cs" />
-    <Compile Include="clparam.cs" />
+    <Compile Include="clParam.cs" />
     <Compile Include="frmMain.cs">
       <SubType>Form</SubType>
     </Compile>

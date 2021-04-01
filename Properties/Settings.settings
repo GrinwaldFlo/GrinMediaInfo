@@ -6,7 +6,7 @@
       <Value Profile="(Default)" />
     </Setting>
     <Setting Name="extension" Type="System.String" Scope="User">
-      <Value Profile="(Default)">aaf 3gp asf avchd avi cam flv m1v m2v fla flr sol m4v mkv wrap mng mov mpeg mpg mpe mxf roq nsv ogg rm svi smi swf wmv mp4</Value>
+      <Value Profile="(Default)">aaf 3gp asf avchd avi cam flv m1v m2v fla flr sol m4v mkv wrap mng mov mpeg mpg mpe mxf roq nsv ogg rm svi smi wmv mp4</Value>
     </Setting>
     <Setting Name="pathBackup" Type="System.String" Scope="User">
       <Value Profile="(Default)" />

@@ -38,7 +38,7 @@ namespace GrinMediaInfo.Properties {
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute("aaf 3gp asf avchd avi cam flv m1v m2v fla flr sol m4v mkv wrap mng mov mpeg mpg m" +
-            "pe mxf roq nsv ogg rm svi smi swf wmv mp4")]
+            "pe mxf roq nsv ogg rm svi smi wmv mp4")]
         public string extension {
             get {
                 return ((string)(this["extension"]));

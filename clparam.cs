@@ -5,7 +5,7 @@ using System.Text;
 
 namespace GrinMediaInfo
 {
-	class clparam
+	class clParam
 	{
 		private string p_path = "";
 		internal string path
@@ -38,5 +38,7 @@ namespace GrinMediaInfo
 		}
 
 		internal string[] extensionArr;
+
+		public string BackupPath { get; set; }
 	}
 }

@@ -12,16 +12,19 @@ using System.Diagnostics;
 using grinlib.CommonTools;
 using NReco.VideoInfo;
 using NReco.VideoConverter;
+using System.Data.Common;
 
 namespace GrinMediaInfo
 {
 	public partial class frmMain : Form
 	{
-		//List<clData> lstData = new List<clData>();
-		List<clData> lstToGetMediaInfo = new List<clData>();
-		List<clData> lstToRefresh = new List<clData>();
-		List<clData> lstToDataToAdd = new List<clData>();
+		BindingData bindingData = new BindingData();
+		List<clData> LstGetInfo = new List<clData>();
+		BindingSource bindingSource = new BindingSource();
+
 		bool isClosing = false;
+		public static bool isDirty = false;
+		long VideoTotalSize = 0;
 
 		public frmMain()
 		{
@@ -31,8 +34,17 @@ namespace GrinMediaInfo
 			txtExtension.Text = Settings.Default.extension;
 			txtBackFolder.Text = Settings.Default.pathBackup;
 
+			bindingSource.DataSource = bindingData;
+			data.DataSource = bindingSource;
+
 			backWorkEncode.RunWorkerAsync();
 			backWorkGetData.RunWorkerAsync();
+
+			foreach (DataGridViewColumn item in data.Columns)
+			{
+				item.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+				item.SortMode = DataGridViewColumnSortMode.Automatic;
+			}
 		}
 
 		private void butStart_Click(object sender, EventArgs e)
@@ -43,20 +55,23 @@ namespace GrinMediaInfo
 				{
 					txtPath.Text += "\\";
 				}
+				if (!txtBackFolder.Text.EndsWith("\\"))
+				{
+					txtBackFolder.Text += "\\";
+				}
 
 				if (butStart.Text == "Start")
 				{
-					data.Rows.Clear();
-					
-					clparam p = new clparam();
+					bindingData.Clear();
+					VideoTotalSize = 0;
+
+					clParam p = new clParam();
 					p.path = txtPath.Text;
 					p.extension = txtExtension.Text;
+					p.BackupPath = txtBackFolder.Text;
 					clData.param = p;
 
 					backWorkFindFiles.RunWorkerAsync(p);
-
-					timAff.Enabled = true;
-
 					butStart.Text = "Cancel";
 				}
 				else
@@ -77,21 +92,22 @@ namespace GrinMediaInfo
 			{
 				try
 				{
-					if (lstToGetMediaInfo.Count > 0)
+					if (LstGetInfo.Count > 0)
 					{
-						clData cur = lstToGetMediaInfo[0];
-						lstToGetMediaInfo.RemoveAt(0);
+						clData cur = LstGetInfo[0];
+						LstGetInfo.RemoveAt(0);
 						cur.updateInfo();
-
-						lstToRefresh.Add(cur);
+						isDirty = true;
 						hadData = true;
+						VideoTotalSize += cur.SizeMb;
+						backWorkGetData.ReportProgress(0);
 					}
 					else
 					{
 						if (hadData)
 						{
-							backWorkGetData.ReportProgress(1);
 							hadData = false;
+							backWorkGetData.ReportProgress(0);
 						}
 
 						System.Threading.Thread.Sleep(500);
@@ -101,7 +117,7 @@ namespace GrinMediaInfo
 				{
 					GenFunc.LogAdd(ex);
 				}
-				
+
 			}
 		}
 
@@ -109,7 +125,7 @@ namespace GrinMediaInfo
 		{
 			try
 			{
-				clparam p = (clparam)e.Argument;
+				clParam p = (clParam)e.Argument;
 				DirectoryInfo curDir = new DirectoryInfo(p.path);
 				if (!curDir.Exists)
 				{
@@ -126,22 +142,23 @@ namespace GrinMediaInfo
 		}
 
 		int cntDirectory = 0;
-		private void getFilesInDir(clparam p, DirectoryInfo curDir)
+		private void getFilesInDir(clParam p, DirectoryInfo curDir)
 		{
 			try
 			{
+				if (backWorkFindFiles.CancellationPending)
+					return;
+
 				FileInfo[] files = curDir.GetFiles();
-				List<clData> result = new List<clData>();
 				for (int i = 0; i < files.Length; i++)
 				{
 					if (isGoodExtension(p, files[i]))
 					{
-						result.Add(new clData(files[i]));
+						backWorkFindFiles.ReportProgress(2, new clData(files[i]));
 					}
 				}
 
-				backWorkFindFiles.ReportProgress(0, result);
-				if(cntDirectory++ > 50)
+				if (cntDirectory++ > 50)
 				{
 					cntDirectory = 0;
 					backWorkFindFiles.ReportProgress(1, curDir.FullName.Substring(p.pathLength));
@@ -160,7 +177,7 @@ namespace GrinMediaInfo
 
 		}
 
-		private bool isGoodExtension(clparam p, FileInfo fileInfo)
+		private bool isGoodExtension(clParam p, FileInfo fileInfo)
 		{
 			try
 			{
@@ -190,11 +207,15 @@ namespace GrinMediaInfo
 							MessageBox.Show(e.UserState.ToString());
 							return;
 						}
-
-						lstToDataToAdd.AddRange((List<clData>)e.UserState);
 						break;
 					case 1:
 						lblScanStatus.Text = "Scanning: " + e.UserState.ToString();
+						break;
+					case 2:
+						clData item = (clData)e.UserState;
+						bindingData.Add(item);
+						LstGetInfo.Add(item);
+						lblVideoFound.Text = bindingData.Count.ToString();
 						break;
 					default:
 						break;
@@ -211,44 +232,11 @@ namespace GrinMediaInfo
 
 		private void timAff_Tick(object sender, EventArgs e)
 		{
-			try
+			if (isDirty)
 			{
-				while (lstToDataToAdd.Count > 0)
-				{
-					clData curItem = lstToDataToAdd[0];
-					lstToDataToAdd.RemoveAt(0);
-
-
-					DataGridViewRow newRow = curItem.getRow();
-					data.Rows.Add(newRow);
-					lstToGetMediaInfo.Add(curItem);
-				}
-
-				while (lstToRefresh.Count > 0)
-				{
-					lstToRefresh[0].refreshRow();
-					lstToRefresh.RemoveAt(0);
-				}
-
-				lblInfo.Text = (data.Rows.Count - lstToGetMediaInfo.Count) + " / " + data.Rows.Count;
-				progressBar.Maximum = data.Rows.Count;
-				progressBar.Value = Math.Max(data.Rows.Count - lstToGetMediaInfo.Count, 0);
-			}
-			catch (Exception ex)
-			{
-				GenFunc.LogAdd(ex);
-			}
-
-			try
-			{
-				while (GenFunc.log.Count > 0)
-				{
-					rtbLog.AppendText(GenFunc.log[0]);
-					GenFunc.log.RemoveAt(0);
-				}
-			}
-			catch (Exception)
-			{
+				isDirty = false;
+				data.Invalidate();
+				data.AutoResizeColumns();
 			}
 		}
 
@@ -258,6 +246,7 @@ namespace GrinMediaInfo
 			isClosing = true;
 			Settings.Default.path = txtPath.Text;
 			Settings.Default.extension = txtExtension.Text;
+			Settings.Default.pathBackup = txtBackFolder.Text;
 
 			Settings.Default.Save();
 		}
@@ -300,9 +289,9 @@ namespace GrinMediaInfo
 		{
 			try
 			{
-				for (int i = 0; i < data.SelectedRows.Count; i++)
+				for (int i = 0; i < data.SelectedCells.Count; i++)
 				{
-					clData cur = (clData)data.SelectedRows[i].Tag;
+					clData cur = (clData)data.SelectedCells[i].OwningRow.DataBoundItem;
 
 					Process.Start(cur.fileInfo.FullName);
 				}
@@ -372,11 +361,21 @@ namespace GrinMediaInfo
 		{
 			try
 			{
-				for (int i = 0; i < data.SelectedRows.Count; i++)
+				if (data.SelectedRows.Count == 0)
 				{
-					clData cur = (clData)data.SelectedRows[i].Tag;
-					cur.Encoding = EnEncoding.Pending;
-					cur.refreshRow();
+					if (data.SelectedCells.Count == 1)
+					{
+						clData cur = (clData)data.SelectedCells[0].OwningRow.DataBoundItem;
+						cur.AskEncoding();
+					}
+				}
+				else
+				{
+					for (int i = 0; i < data.SelectedRows.Count; i++)
+					{
+						clData cur = (clData)data.SelectedRows[i].DataBoundItem;
+						cur.AskEncoding();
+					}
 				}
 			}
 			catch (Exception ex)
@@ -395,34 +394,16 @@ namespace GrinMediaInfo
 			{
 				try
 				{
-					for (int i = 0; i < data.Rows.Count; i++)
+					for (int i = 0; i < bindingData.Count; i++)
 					{
-						clData cur = (clData)data.Rows[i].Tag;
-						if (cur.Encoding == EnEncoding.Pending)
+						clData cur = (clData)bindingData[i];
+						if (cur.Status == EnEncoding.Pending)
 						{
-							cur.Encoding = EnEncoding.Processing;
-							backWorkEncode.ReportProgress(0, cur);
-							string newName = cur.fileInfo.FullName;
-							cur.fileInfo.MoveTo(cur.fileInfo.DirectoryName + "\\_OldFile_" + cur.fileInfo.Name);
-
-							var ffMpeg = new NReco.VideoConverter.FFMpegConverter();
-							ConvertSettings c = new ConvertSettings();
-							//c.VideoCodec = "libx264";
-							//c.CustomOutputArgs = "-crf 23";
-							//ffMpeg.ConvertMedia(cur.fileInfo.FullName, null, newName + "23", "MP4", c);
-
-							//c.CustomOutputArgs = "-crf 1";
-							//ffMpeg.ConvertMedia(cur.fileInfo.FullName, null, newName + "1", "MP4", c);
-
-							c.VideoCodec = "libx265";
-							c.CustomOutputArgs = "-crf 28";
-							ffMpeg.ConvertMedia(cur.fileInfo.FullName, null, newName, "MP4", c);
-							cur.Encoding = EnEncoding.Done;
-							backWorkEncode.ReportProgress(0, cur);
+							cur.EncodeVideo();
 						}
 					}
 				}
-				catch (Exception )
+				catch (Exception)
 				{
 				}
 				System.Threading.Thread.Sleep(5000);
@@ -431,14 +412,82 @@ namespace GrinMediaInfo
 
 		private void backWorkEncode_ProgressChanged(object sender, ProgressChangedEventArgs e)
 		{
-			clData cur = (clData)e.UserState;
-			cur.refreshRow();
+			//clData cur = (clData)e.UserState;
+			//cur.refreshRow();
 		}
 
 		private void backWorkGetData_ProgressChanged(object sender, ProgressChangedEventArgs e)
 		{
-			if(!backWorkFindFiles.IsBusy)
-				butStart.Text = "Start";
+			lblGettingInfo.Text = LstGetInfo.Count.ToString();
+			if (VideoTotalSize > 1000)
+			{
+				lblTotalVideoSize.Text = Math.Round(VideoTotalSize / 1024.0, 2) + " GB";
+			}
+			else
+			{
+				lblTotalVideoSize.Text = VideoTotalSize + " MB";
+			}
+		}
+
+		private void cancelEncodeToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+
+		}
+
+		private void cMenuData_Opening(object sender, CancelEventArgs e)
+		{
+			bool SingleSelection = data.SelectedRows.Count == 0 && data.SelectedCells.Count == 1;
+
+			playToolStripMenuItem.Enabled = SingleSelection;
+			playBackupToolStripMenuItem.Enabled = SingleSelection && File.Exists(((clData)data.SelectedCells[0].OwningRow.DataBoundItem).pathBackup);
+		}
+
+		private void backWorkFindFiles_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+		{
+			butStart.Text = "Start";
+			lblScanStatus.Text = "";
+		}
+
+		private void data_CellClick(object sender, DataGridViewCellEventArgs e)
+		{
+			if (e.RowIndex == -1)
+				return;
+			clData cur = (clData)data.Rows[e.RowIndex].DataBoundItem;
+
+			if (cur.EncodingLog != null && cur.EncodingLog.Length > 0)
+				rtbLog.Text = cur.EncodingLog.ToString();
+		}
+
+		private void playBackupToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			try
+			{
+				for (int i = 0; i < data.SelectedCells.Count; i++)
+				{
+					clData cur = (clData)data.SelectedCells[i].OwningRow.DataBoundItem;
+
+					Process.Start(cur.pathBackup);
+				}
+			}
+			catch (Exception ex)
+			{
+				GenFunc.LogAdd(ex);
+			}
+		}
+
+		private void restoreBackupToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+
+		}
+
+		private void openFolderToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+
+		}
+
+		private clData GetSelectedItem()
+		{
+			if(data.SelectedRows == 0 && data.SelectedCells.Count == 1)
 		}
 	}
 }
